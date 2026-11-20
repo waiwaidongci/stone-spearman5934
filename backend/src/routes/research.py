@@ -8,10 +8,12 @@ from src.schemas.study import StudyInput
 from src.schemas.observation import ObservationInput
 from src.schemas.run import RunInput
 from src.schemas.review import ReviewInput
+from src.schemas.exclusion import ExclusionPreviewInput,ExclusionTrialInput
 from src.controllers import research
-from src.services import runs,studies
+from src.services import exclusions,runs,studies
 from src.models.audit import Audit
 from src.models.observation import Observation
+from src.models.study import Study
 from src.services.audits import log
 from src.utils.serializers import record
 router=APIRouter()
@@ -31,6 +33,9 @@ def add(id:int,data:ObservationInput,db=Depends(get_db),user=Depends(writer)): r
 def update(id:int,row_id:int,data:ObservationInput,db=Depends(get_db),user=Depends(writer)): return research.save_row(db,id,data,user,row_id)
 @router.delete('/studies/{id}/observations/{row_id}')
 def remove(id:int,row_id:int,db=Depends(get_db),user=Depends(writer)):
+    studies.require(db,id)
+    # Same study lock as observation saves and trial freezing.
+    if not db.scalar(select(Study).where(Study.id==id).with_for_update()): raise HTTPException(404,'业务批次不存在')
     row=db.get(Observation,row_id)
     if not row or row.study_id!=id: raise HTTPException(404,'记录不存在')
     db.delete(row);log(db,user,'observation.delete',row_id);db.commit();return {'deleted':True}
@@ -45,5 +50,13 @@ def review(id:int,data:ReviewInput,db=Depends(get_db),user=Depends(admin)): retu
 @router.get('/runs/{id}/export')
 def export(id:int,db=Depends(get_db),user=Depends(current_user)):
     return Response(content=runs.export(db,id,user).encode('utf-8'),media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="research-{id}.csv"'})
+@router.post('/exclusions/preview')
+def exclusion_preview(data:ExclusionPreviewInput,db=Depends(get_db),user=Depends(current_user)): return exclusions.preview(db,data)
+@router.get('/exclusions')
+def list_exclusions(study_id:int|None=None,db=Depends(get_db),user=Depends(current_user)): return exclusions.list_trials(db,study_id)
+@router.post('/exclusions')
+def create_exclusion(data:ExclusionTrialInput,db=Depends(get_db),user=Depends(writer)): return exclusions.create(db,data,user)
+@router.get('/exclusions/{id}')
+def get_exclusion(id:int,db=Depends(get_db),user=Depends(current_user)): return exclusions.get(db,id)
 @router.get('/audits')
 def audits(db=Depends(get_db),user=Depends(current_user)): return [record(x) for x in db.scalars(select(Audit).order_by(Audit.id.desc()).limit(100))]

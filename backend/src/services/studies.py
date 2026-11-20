@@ -25,7 +25,10 @@ def observations(db,id):
     require(db,id);return [record(x) for x in db.scalars(select(Observation).where(Observation.study_id==id).order_by(Observation.id))]
 
 def save_observation(db,id,data,user,row_id=None):
-    require(db,id)
+    # Serialize against trial freezing: a trial takes the same study row lock
+    # before hashing its basis, so an observation save either lands before the
+    # frozen basis or is told the old plan can no longer be confirmed.
+    if not db.scalar(select(Study).where(Study.id==id).with_for_update()): raise HTTPException(404,'业务批次不存在')
     try: values=validate_values(data.values)
     except (ValueError,TypeError) as e: raise HTTPException(422,str(e))
     other=db.scalar(select(Observation).where(Observation.study_id==id,Observation.source_key==data.source_key))
